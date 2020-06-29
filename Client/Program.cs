@@ -146,11 +146,31 @@ namespace Client
                 RecordResetEvent.Set();
                 playThread.Abort();
                 sendThread.Abort();
+
+                FlushBuffers();
             }
             else
             {
                 Console.ReadKey();
             }
+        }
+
+        // очистка буферов
+        private static void FlushBuffers()
+        {
+            while (SendQueue.Count > 0)
+            {
+                SendQueue.Dequeue();
+            }
+
+            Console.WriteLine("SendQueue Flushed");
+
+            while (PlayQueue.Count > 0)
+            {
+                SendQueue.Dequeue();
+            }
+
+            Console.WriteLine("PlayQueue Flushed");
         }
 
         // работа потока записи
@@ -205,10 +225,11 @@ namespace Client
                     {
                         // если словили ошибку - сокет отключился
                         Console.WriteLine("Host lost");
-                        Console.WriteLine("Aborting SendThread");
                         IsSocketConnected = false;
                         Thread.CurrentThread.Abort();
                         RecordResetEvent.Set();
+
+                        FlushBuffers();
                     }
 
                     // Console.WriteLine("Sent");
@@ -297,6 +318,7 @@ namespace Client
                 IsSocketConnected = false;
                 MainSocket.Close();
                 RecordResetEvent.Set();
+                FlushBuffers();
             }
         }
 
