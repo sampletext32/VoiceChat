@@ -16,7 +16,11 @@ namespace Host
 
         private static readonly List<ClientData> Clients = new List<ClientData>();
 
-        public static int SendingBufferSize = 8820;
+        public static int SendingFrequency = 16;
+        public static int SampleRate = 44100;
+        public static int BytesPerSample = 2;
+
+        public static int SendingBufferSize = SampleRate * BytesPerSample / SendingFrequency;
 
         public static void Main(string[] args)
         {
@@ -39,16 +43,20 @@ namespace Host
             double pow2_15 = 1 << 15;
             while (Thread.CurrentThread.ThreadState != ThreadState.AbortRequested)
             {
-                byte[] buffer = new byte[SendingBufferSize];
                 if (Clients.Count != 0)
                 {
-                    for (int s = 0; s < buffer.Length / 2; s += 2)
+                    byte[] buffer = new byte[SendingBufferSize];
+                    for (int s = 0; s < SendingBufferSize; s += 2)
                     {
                         // mix samples
 
                         float[] samples = new float[Clients.Count];
                         for (var i = 0; i < Clients.Count; i++)
                         {
+                            while (Clients[i].ReceiveBuffer.Queue.Count > 4) // 5 пакетов - задержка серьёзная
+                            {
+                                Clients[i].ReceiveBuffer.Queue.Dequeue();
+                            }
                             var b1 = Clients[i].ReceiveBuffer.GetByte();
                             var b2 = Clients[i].ReceiveBuffer.GetByte();
 
@@ -71,16 +79,16 @@ namespace Host
                         buffer[s] = s_b1;
                         buffer[s + 1] = s_b2;
                     }
+
+                    for (int i = 0; i < Clients.Count; i++)
+                    {
+                        Clients[i].Socket.Send(buffer);
+                    }
+
+                    Console.WriteLine($"Sent {buffer.Length}");
                 }
 
-                for (int i = 0; i < Clients.Count; i++)
-                {
-                    Clients[i].Socket.Send(buffer);
-                }
-
-                Console.WriteLine($"Sent {buffer.Length}");
-
-                Thread.Sleep((int) ((float) SendingBufferSize / 44100 * 1000));
+                Thread.Sleep(1000 / SendingFrequency);
             }
         }
 
@@ -106,7 +114,7 @@ namespace Host
             {
                 var received = clientData.Socket.EndReceive(ar);
 
-                Console.WriteLine($"Received {received}");
+                Console.WriteLine($"\tRecv {received}");
 
                 byte[] actualBytes = new byte[received];
                 Buffer.BlockCopy(clientData.ReceiveSocketBuffer, 0, actualBytes, 0, received);
@@ -157,6 +165,7 @@ namespace Host
                 }
                 else
                 {
+                    _currentBuffer = null;
                     return 0;
                 }
             }
@@ -166,6 +175,11 @@ namespace Host
                 _position++;
                 return data;
             }
+        }
+
+        public int Available()
+        {
+            return Queue.Sum(t => t.Length) + (_currentBuffer?.Length - _position ?? 0);
         }
 
         public ReceiveBuffer()

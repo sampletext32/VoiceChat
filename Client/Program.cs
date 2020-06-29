@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NAudio;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
 
@@ -16,8 +17,12 @@ namespace Client
     class Program
     {
         private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
+        
+        public static int SendingFrequency = 16;
+        public static int SampleRate = 44100;
+        public static int BytesPerSample = 2;
 
-        private static readonly int SendingBufferSize = 8820;
+        private static readonly int SendingBufferSize = SampleRate * BytesPerSample / SendingFrequency;
 
         private static readonly BufferedWaveProvider BufferedWaveProvider =
             new BufferedWaveProvider(DefaultRecordingFormat);
@@ -40,11 +45,11 @@ namespace Client
 
         public static void Main(string[] args)
         {
-            WaveOut.PlaybackStopped += WaveOut_PlaybackStopped;
+            WaveOut.DesiredLatency = 1000 / SendingFrequency;
             WaveOut.Init(BufferedWaveProvider);
 
             WaveIn.DeviceNumber = 0;
-            WaveIn.BufferMilliseconds = 50;
+            WaveIn.BufferMilliseconds = 1000 / SendingFrequency;
             WaveIn.WaveFormat = DefaultRecordingFormat;
             WaveIn.DataAvailable += WaveIn_DataAvailable;
 
@@ -120,11 +125,16 @@ namespace Client
                     }
                 }
 
+                if (SendingQueue.Count > 1)
+                {
+                    Console.WriteLine("Sending Queue is larger than 1");
+                }
+
                 while (SendingQueue.Count > 0 && IsSocketConnected)
                 {
                     var sendingBuffer = SendingQueue.Dequeue();
                     MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
-                    Console.WriteLine("Sent data");
+                    // Console.WriteLine("Sent");
                 }
 
                 Thread.Sleep(1);
@@ -145,9 +155,15 @@ namespace Client
                     }
                 }
 
-                while (MainPlayQueue.Count != 0)
+                if (MainPlayQueue.Count > 1)
                 {
-                    Console.WriteLine("Playing");
+                    Console.WriteLine("Play buffer is larger than 1");
+                }
+
+                PlayResetEvent.WaitOne();
+                while (MainPlayQueue.Count > 0)
+                {
+                    // Console.WriteLine("Playing");
                     var playingBuffer = MainPlayQueue.Dequeue();
                     BufferedWaveProvider.AddSamples(playingBuffer, 0, playingBuffer.Length);
                     if (WaveOut.PlaybackState != PlaybackState.Playing)
@@ -165,10 +181,11 @@ namespace Client
             try
             {
                 var receivedBytesCount = MainSocket.EndReceive(ar);
-                Console.WriteLine("Received data");
+                Console.WriteLine("Recv data");
                 byte[] playBytes = new byte[receivedBytesCount];
                 Buffer.BlockCopy(MainSocketBuffer, 0, playBytes, 0, receivedBytesCount);
                 MainPlayQueue.Enqueue(playBytes);
+                PlayResetEvent.Set();
                 MainSocket.BeginReceive(MainSocketBuffer, 0, SendingBufferSize, SocketFlags.None,
                     OnClientSocketEndReceive, null);
             }
@@ -176,11 +193,6 @@ namespace Client
             {
                 Console.WriteLine("Host lost");
             }
-        }
-
-        private static void WaveOut_PlaybackStopped(object sender, StoppedEventArgs e)
-        {
-            PlayResetEvent.Set();
         }
 
         private static void WaveIn_DataAvailable(object sender, WaveInEventArgs e)
