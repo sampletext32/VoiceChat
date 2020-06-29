@@ -4,25 +4,25 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-using NAudio.Wave;
 
 namespace Host
 {
     public class Program
     {
-        private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
+        public static int RecordingSampleRate = 44100; // частота дискретизации записи
+        public static int RecordingChannels = 1; // количество каналов записи
+        public static int RecordingBytesPerSample = RecordingChannels * 2; // 16 бит формат по умолчанию
 
+        public static int SendingFrequency = 16; // частота рассылки сервера
+        public static int SendingBufferSize = RecordingSampleRate * RecordingBytesPerSample / SendingFrequency;
+
+        public static int MaxBufferedPackets = 5; // максимальное количество пакетов в очереди на отправку
+
+        // Главный сокет
         private static readonly Socket ListenSocket =
             new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
-        private static readonly List<ClientData> Clients = new List<ClientData>();
-
-        public static int SendingFrequency = 16;
-
-        public static int SampleRate = DefaultRecordingFormat.SampleRate;
-        public static int BytesPerSample = DefaultRecordingFormat.BitsPerSample * 8;
-
-        public static int SendingBufferSize = SampleRate * BytesPerSample / SendingFrequency;
+        private static readonly List<ClientData> ConnectedClients = new List<ClientData>();
 
         public static void Main(string[] args)
         {
@@ -45,64 +45,69 @@ namespace Host
             const double pow2_15 = 1 << 15;
             while (Thread.CurrentThread.ThreadState != ThreadState.AbortRequested)
             {
-                if (Clients.Count == 0)
+                // если клиентов нет - просто ждём
+                if (ConnectedClients.Count == 0)
                 {
                     Thread.Sleep(1);
                     continue;
                 }
 
-                byte[] buffer = new byte[SendingBufferSize];
-                for (int s = 0; s < SendingBufferSize; s += 2)
+                byte[] finalSendingBuffer = new byte[SendingBufferSize];
+                for (int b = 0; b < SendingBufferSize; b += 2)
                 {
                     // mix samples
 
-                    float[] samples = new float[Clients.Count];
-                    for (var i = 0; i < Clients.Count; i++)
+                    float[] samplesFromClients = new float[ConnectedClients.Count];
+                    for (int i = 0; i < ConnectedClients.Count; i++)
                     {
-                        while (Clients[i].QueuedBuffer.Queue.Count > 4) // 5 пакетов - задержка серьёзная
+                        // освобождаем очередь пакетов
+                        while (ConnectedClients[i].QueuedBuffer.Queue.Count >= MaxBufferedPackets)
                         {
-                            Clients[i].QueuedBuffer.Queue.Dequeue();
+                            ConnectedClients[i].QueuedBuffer.Queue.Dequeue();
                         }
 
-                        var b1 = Clients[i].QueuedBuffer.GetByte();
-                        var b2 = Clients[i].QueuedBuffer.GetByte();
+                        // вытаскиваем 2 байта из очереди от клиента
+                        var firstByte = ConnectedClients[i].QueuedBuffer.GetByte();
+                        var secondByte = ConnectedClients[i].QueuedBuffer.GetByte();
 
-                        // unpack 16 bit sample
-                        short sample = (short) (b1 | (b2 << 8));
-                        samples[i] = (float) (sample / pow2_15);
+                        // распаковываем PCM сэмпл
+                        short sample = (short) (firstByte | (secondByte << 8));
+
+                        //записываем сэмпл от клиента
+                        samplesFromClients[i] = (float) (sample / pow2_15); 
                     }
 
-                    // find average
-                    float avg_sample = samples.Average();
+                    // ищем максимальное значение сэмпла
+                    float maxSample = samplesFromClients.Max();
 
                     // represent as short
-                    short avg_sample_short = (short) (avg_sample * pow2_15);
+                    short maxSampleShort = (short) (maxSample * pow2_15);
 
                     // convert to bytes
-                    byte s_b1 = (byte) (avg_sample_short & 0xff);
-                    byte s_b2 = (byte) ((avg_sample_short >> 8) & 0xff);
+                    byte sendingFirstByte = (byte) (maxSampleShort & 0xff);
+                    byte sendingSecondByte = (byte) ((maxSampleShort >> 8) & 0xff);
 
                     //write
-                    buffer[s] = s_b1;
-                    buffer[s + 1] = s_b2;
+                    finalSendingBuffer[b] = sendingFirstByte;
+                    finalSendingBuffer[b + 1] = sendingSecondByte;
                 }
 
-                for (int i = 0; i < Clients.Count; i++)
+                for (int i = 0; i < ConnectedClients.Count; i++)
                 {
                     try
                     {
-                        Clients[i].Socket.Send(buffer);
+                        ConnectedClients[i].Socket.Send(finalSendingBuffer);
                     }
                     catch (SocketException)
                     {
                         Console.WriteLine("Client lost");
-                        Clients[i].Socket.Close();
-                        Clients.RemoveAt(i);
+                        ConnectedClients[i].Socket.Close();
+                        ConnectedClients.RemoveAt(i);
                         i--;
                     }
                 }
 
-                Console.WriteLine($"Sent {buffer.Length}");
+                // Console.WriteLine($"Sent {finalSendingBuffer.Length}");
 
                 Thread.Sleep(1000 / SendingFrequency);
             }
@@ -117,7 +122,7 @@ namespace Host
 
                 ClientData clientData = new ClientData(clientSocket, SendingBufferSize);
 
-                Clients.Add(clientData);
+                ConnectedClients.Add(clientData);
                 clientSocket.BeginReceive(clientData.SocketReceiveBuffer, 0, clientData.SocketReceiveBuffer.Length,
                     SocketFlags.None,
                     OnReceiveFromClient, clientData);
@@ -137,7 +142,7 @@ namespace Host
             {
                 var receivedFromClient = clientData.Socket.EndReceive(ar);
 
-                Console.WriteLine($"\tRecv {receivedFromClient}");
+                // Console.WriteLine($"\tRecv {receivedFromClient}");
 
                 byte[] bufferForUserData = new byte[receivedFromClient];
                 Buffer.BlockCopy(clientData.SocketReceiveBuffer, 0, bufferForUserData, 0, receivedFromClient);
@@ -151,7 +156,7 @@ namespace Host
             {
                 Console.WriteLine("Client disconnected");
                 clientData.Socket.Close();
-                Clients.Remove(clientData);
+                ConnectedClients.Remove(clientData);
             }
         }
     }
