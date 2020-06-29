@@ -202,11 +202,6 @@ namespace Host
             }
         }
 
-        public int Available()
-        {
-            return Queue.Sum(t => t.Length) + (_currentBuffer?.Length - _position ?? 0);
-        }
-
         public ReceiveBuffer()
         {
             Queue = new Queue<byte[]>();
