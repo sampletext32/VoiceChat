@@ -61,6 +61,7 @@ namespace Host
                             {
                                 Clients[i].ReceiveBuffer.Queue.Dequeue();
                             }
+
                             var b1 = Clients[i].ReceiveBuffer.GetByte();
                             var b2 = Clients[i].ReceiveBuffer.GetByte();
 
@@ -86,7 +87,17 @@ namespace Host
 
                     for (int i = 0; i < Clients.Count; i++)
                     {
-                        Clients[i].Socket.Send(buffer);
+                        try
+                        {
+                            Clients[i].Socket.Send(buffer);
+                        }
+                        catch (SocketException)
+                        {
+                            Console.WriteLine("Client lost");
+                            Clients[i].Socket.Close();
+                            Clients.RemoveAt(i);
+                            i--;
+                        }
                     }
 
                     Console.WriteLine($"Sent {buffer.Length}");
