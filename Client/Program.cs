@@ -19,8 +19,9 @@ namespace Client
         private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
         
         public static int SendingFrequency = 16;
-        public static int SampleRate = 44100;
-        public static int BytesPerSample = 2;
+
+        public static int SampleRate = DefaultRecordingFormat.SampleRate;
+        public static int BytesPerSample = DefaultRecordingFormat.BitsPerSample * 8;
 
         private static readonly int SendingBufferSize = SampleRate * BytesPerSample / SendingFrequency;
 

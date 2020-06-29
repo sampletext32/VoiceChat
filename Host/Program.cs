@@ -6,19 +6,23 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using NAudio.Wave;
 
 namespace Host
 {
     class Program
     {
+        private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
+
         private static readonly Socket MainSocket =
             new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
         private static readonly List<ClientData> Clients = new List<ClientData>();
 
         public static int SendingFrequency = 16;
-        public static int SampleRate = 44100;
-        public static int BytesPerSample = 2;
+
+        public static int SampleRate = DefaultRecordingFormat.SampleRate;
+        public static int BytesPerSample = DefaultRecordingFormat.BitsPerSample * 8;
 
         public static int SendingBufferSize = SampleRate * BytesPerSample / SendingFrequency;
 
