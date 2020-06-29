@@ -17,7 +17,7 @@ namespace Client
     class Program
     {
         private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
-        
+
         public static int SendingFrequency = 16;
 
         public static int SampleRate = DefaultRecordingFormat.SampleRate;
@@ -134,7 +134,17 @@ namespace Client
                 while (SendingQueue.Count > 0 && IsSocketConnected)
                 {
                     var sendingBuffer = SendingQueue.Dequeue();
-                    MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
+                    try
+                    {
+                        MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
+                    }
+                    catch (SocketException)
+                    {
+                        Console.WriteLine("Host lost");
+                        Console.WriteLine("Aborting SendThread");
+                        Thread.CurrentThread.Abort();
+                    }
+
                     // Console.WriteLine("Sent");
                 }
 
