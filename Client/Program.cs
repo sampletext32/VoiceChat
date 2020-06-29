@@ -17,13 +17,18 @@ namespace Client
     {
         private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
 
+        private static readonly int SendingBufferSize = 8820;
+
+        private static readonly BufferedWaveProvider BufferedWaveProvider =
+            new BufferedWaveProvider(DefaultRecordingFormat);
+
         private static readonly Queue<byte[]> SendingQueue = new Queue<byte[]>();
         private static readonly Queue<byte[]> MainPlayQueue = new Queue<byte[]>();
 
         private static readonly WaveInEvent WaveIn = new WaveInEvent();
         private static readonly WaveOutEvent WaveOut = new WaveOutEvent();
 
-        private static readonly byte[] MainSocketBuffer = new byte[32768];
+        private static readonly byte[] MainSocketBuffer = new byte[SendingBufferSize];
 
         private static readonly Socket MainSocket =
             new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -33,61 +38,46 @@ namespace Client
         private static readonly AutoResetEvent PlayResetEvent = new AutoResetEvent(true);
         private static readonly AutoResetEvent RecordResetEvent = new AutoResetEvent(false);
 
-        private static readonly List<ClientData> ConnectedSocketsData = new List<ClientData>();
-        
         public static void Main(string[] args)
         {
             WaveOut.PlaybackStopped += WaveOut_PlaybackStopped;
+            WaveOut.Init(BufferedWaveProvider);
 
             WaveIn.DeviceNumber = 0;
+            WaveIn.BufferMilliseconds = 50;
             WaveIn.WaveFormat = DefaultRecordingFormat;
             WaveIn.DataAvailable += WaveIn_DataAvailable;
 
+            // Client
+            // Console.WriteLine("Please enter host ip:port - ");
+            // line = Console.ReadLine();
+            // var tokens = line.Split(':');
 
-            var line = Console.ReadLine();
-            if (line == "1")
+            string host = "127.0.0.1"; //tokens[0];
+            int port = 11771; //int.Parse(tokens[1]);
+            var hostIp = IPAddress.Parse(host);
+
+            var asyncResult = MainSocket.BeginConnect(hostIp, port, ar => { }, null);
+
+            bool success = asyncResult.AsyncWaitHandle.WaitOne(5000, true);
+
+            if (success && MainSocket.Connected)
             {
-                // Client
-                // Console.WriteLine("Please enter host ip:port - ");
-                // line = Console.ReadLine();
-                // var tokens = line.Split(':');
+                Console.WriteLine("MainSocket Connected");
 
-                string host = "127.0.0.1"; //tokens[0];
-                int port = 11771; //int.Parse(tokens[1]);
-                var hostIp = IPAddress.Parse(host);
+                MainSocket.EndConnect(asyncResult);
+                // Пробуем подключиться в течение 5 секунд
+                IsSocketConnected = true;
 
-                var asyncResult = MainSocket.BeginConnect(hostIp, port, ar => { }, null);
-
-                bool success = asyncResult.AsyncWaitHandle.WaitOne(5000, true);
-
-                if (success)
-                {
-                    if (MainSocket.Connected)
-                    {
-                        Console.WriteLine("MainSocket Connected");
-
-                        MainSocket.EndConnect(asyncResult);
-                        // Пробуем подключиться в течение 5 секунд
-                        IsSocketConnected = true;
-
-                        MainSocket.BeginReceive(MainSocketBuffer, 0, 32768, SocketFlags.None, OnClientSocketEndReceive,
-                            null);
-                        PlayResetEvent.Set();
-                    }
-                    else
-                    {
-                        Console.WriteLine("MainSocket Is Not Connected");
-                    }
-                }
-                else
-                {
-                    MainSocket.Close();
-                    Console.WriteLine("Unable to connect");
-                }
+                MainSocket.BeginReceive(MainSocketBuffer, 0, SendingBufferSize, SocketFlags.None,
+                    OnClientSocketEndReceive,
+                    null);
+                PlayResetEvent.Set();
             }
-            else if (line == "2")
+            else
             {
-                MainSocket.BeginAccept(OnHostAcceptClient, null);
+                MainSocket.Close();
+                Console.WriteLine("Unable to connect");
             }
 
             // Launch Record Thread
@@ -105,29 +95,6 @@ namespace Client
             RecordResetEvent.Set();
             playThread.Abort();
             sendThread.Abort();
-        }
-
-        private static void OnHostAcceptClient(IAsyncResult ar)
-        {
-            Socket client = MainSocket.EndAccept(ar);
-            ClientData clientData = new ClientData(client, 8192);
-            client.BeginReceive(clientData.Buffer, clientData.ReceivedBytes,
-                clientData.Buffer.Length, SocketFlags.None, OnHostReceiveFromClient, clientData);
-            ConnectedSocketsData.Add(clientData);
-        }
-
-        private static void OnHostReceiveFromClient(IAsyncResult ar)
-        {
-            var clientData = (ClientData) ar.AsyncState;
-            var received = clientData.Socket.EndReceive(ar);
-
-            byte[] playBytes = new byte[received];
-            Buffer.BlockCopy(MainSocketBuffer, 0, playBytes, 0, received);
-
-            clientData.PlayQueue.Enqueue(playBytes);
-
-            clientData.Socket.BeginReceive(clientData.Buffer, clientData.ReceivedBytes,
-                clientData.Buffer.Length, SocketFlags.None, OnHostReceiveFromClient, clientData);
         }
 
         private static void RecordThreadJob()
@@ -153,10 +120,11 @@ namespace Client
                     }
                 }
 
-                while (SendingQueue.Count != 0 && IsSocketConnected)
+                while (SendingQueue.Count > 0 && IsSocketConnected)
                 {
                     var sendingBuffer = SendingQueue.Dequeue();
                     MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
+                    Console.WriteLine("Sent data");
                 }
 
                 Thread.Sleep(1);
@@ -179,12 +147,13 @@ namespace Client
 
                 while (MainPlayQueue.Count != 0)
                 {
+                    Console.WriteLine("Playing");
                     var playingBuffer = MainPlayQueue.Dequeue();
-                    PlayResetEvent.WaitOne();
-                    IWaveProvider provider =
-                        new RawSourceWaveStream(new MemoryStream(playingBuffer), DefaultRecordingFormat);
-                    WaveOut.Init(provider);
-                    WaveOut.Play();
+                    BufferedWaveProvider.AddSamples(playingBuffer, 0, playingBuffer.Length);
+                    if (WaveOut.PlaybackState != PlaybackState.Playing)
+                    {
+                        WaveOut.Play();
+                    }
                 }
 
                 Thread.Sleep(1);
@@ -193,11 +162,20 @@ namespace Client
 
         private static void OnClientSocketEndReceive(IAsyncResult ar)
         {
-            var receivedBytesCount = MainSocket.EndReceive(ar);
-            byte[] playBytes = new byte[receivedBytesCount];
-            Buffer.BlockCopy(MainSocketBuffer, 0, playBytes, 0, receivedBytesCount);
-            MainPlayQueue.Enqueue(playBytes);
-            MainSocket.BeginReceive(MainSocketBuffer, 0, 32768, SocketFlags.None, OnClientSocketEndReceive, null);
+            try
+            {
+                var receivedBytesCount = MainSocket.EndReceive(ar);
+                Console.WriteLine("Received data");
+                byte[] playBytes = new byte[receivedBytesCount];
+                Buffer.BlockCopy(MainSocketBuffer, 0, playBytes, 0, receivedBytesCount);
+                MainPlayQueue.Enqueue(playBytes);
+                MainSocket.BeginReceive(MainSocketBuffer, 0, SendingBufferSize, SocketFlags.None,
+                    OnClientSocketEndReceive, null);
+            }
+            catch (SocketException)
+            {
+                Console.WriteLine("Host lost");
+            }
         }
 
         private static void WaveOut_PlaybackStopped(object sender, StoppedEventArgs e)
@@ -210,21 +188,6 @@ namespace Client
             byte[] recordBytes = new byte[e.BytesRecorded];
             Buffer.BlockCopy(e.Buffer, 0, recordBytes, 0, e.BytesRecorded);
             SendingQueue.Enqueue(recordBytes);
-        }
-    }
-
-    public class ClientData
-    {
-        public int ReceivedBytes { get; set; }
-        public Socket Socket { get; private set; }
-        public byte[] Buffer { get; private set; }
-        public Queue<byte[]> PlayQueue { get; private set; }
-
-        public ClientData(Socket socket, int size)
-        {
-            Socket = socket;
-            Buffer = new byte[size];
-            PlayQueue = new Queue<byte[]>();
         }
     }
 }
