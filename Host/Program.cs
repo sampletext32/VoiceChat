@@ -3,14 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using NAudio.Wave;
 
 namespace Host
 {
-    class Program
+    public class Program
     {
         private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
 
