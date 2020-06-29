@@ -162,7 +162,7 @@ namespace Host
     {
         public Socket Socket { get; private set; }
         public byte[] SocketReceiveBuffer { get; private set; }
-        public ReceiveBuffer QueuedBuffer { get; set; }
+        public ReceiveBuffer QueuedBuffer { get; private set; }
 
         public ClientData(Socket socket, int size)
         {
@@ -174,29 +174,29 @@ namespace Host
 
     public class ReceiveBuffer
     {
-        private byte[] _currentBuffer { get; set; }
-        private int _position = 0;
-        public Queue<byte[]> Queue { get; set; }
+        public byte[] CurrentBuffer { get; private set; }
+        public int _position { get; private set; }
+        public Queue<byte[]> Queue { get; private set; }
 
         public byte GetByte()
         {
-            if (_currentBuffer == null || _position == _currentBuffer.Length)
+            if (CurrentBuffer == null || _position == CurrentBuffer.Length)
             {
                 if (Queue.Count > 0)
                 {
-                    _currentBuffer = Queue.Dequeue();
+                    CurrentBuffer = Queue.Dequeue();
                     _position = 0;
                     return GetByte();
                 }
                 else
                 {
-                    _currentBuffer = null;
+                    CurrentBuffer = null;
                     return 0;
                 }
             }
             else
             {
-                byte data = _currentBuffer[_position];
+                byte data = CurrentBuffer[_position];
                 _position++;
                 return data;
             }
