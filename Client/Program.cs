@@ -189,8 +189,15 @@ namespace Client
                     var sendingBuffer = SendingQueue.Dequeue();
                     try
                     {
-                        // пытаемся отправить буфер
-                        MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
+                        if (IsSocketConnected)
+                        {
+                            // пытаемся отправить буфер
+                            MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Сокет уже отключен");
+                        }
                     }
                     catch (SocketException)
                     {
@@ -254,24 +261,31 @@ namespace Client
             // пробуем получить данные
             try
             {
-                // количество полученных байт 
-                var receivedBytesCount = MainSocket.EndReceive(ar);
-                // Console.WriteLine("Recv data");
+                if (IsSocketConnected)
+                {
+                    // количество полученных байт 
+                    var receivedBytesCount = MainSocket.EndReceive(ar);
+                    // Console.WriteLine("Recv data");
 
-                // создаём буфер
-                byte[] playBytes = new byte[receivedBytesCount];
-                // копируем данные в буфер
-                Buffer.BlockCopy(MainSocketBuffer, 0, playBytes, 0, receivedBytesCount);
+                    // создаём буфер
+                    byte[] playBytes = new byte[receivedBytesCount];
+                    // копируем данные в буфер
+                    Buffer.BlockCopy(MainSocketBuffer, 0, playBytes, 0, receivedBytesCount);
 
-                // добавляем буфер в очередь
-                MainPlayQueue.Enqueue(playBytes);
+                    // добавляем буфер в очередь
+                    MainPlayQueue.Enqueue(playBytes);
 
-                // разрешаем воспроизведение
-                PlayResetEvent.Set();
+                    // разрешаем воспроизведение
+                    PlayResetEvent.Set();
 
-                // заново запускаем получение данных от сервера
-                MainSocket.BeginReceive(MainSocketBuffer, 0, SendingBufferSize, SocketFlags.None,
-                    OnSocketEndReceive, null);
+                    // заново запускаем получение данных от сервера
+                    MainSocket.BeginReceive(MainSocketBuffer, 0, SendingBufferSize, SocketFlags.None,
+                        OnSocketEndReceive, null);
+                }
+                else
+                {
+                    Console.WriteLine("Сокет уже отключен");
+                }
             }
             catch (SocketException)
             {
