@@ -14,7 +14,7 @@ namespace Host
     {
         private static readonly WaveFormat DefaultRecordingFormat = new WaveFormat(44100, 1);
 
-        private static readonly Socket MainSocket =
+        private static readonly Socket ListenSocket =
             new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
         private static readonly List<ClientData> Clients = new List<ClientData>();
@@ -28,80 +28,83 @@ namespace Host
 
         public static void Main(string[] args)
         {
-            MainSocket.Bind(new IPEndPoint(IPAddress.Loopback, 11771));
-            MainSocket.Listen(10);
-            MainSocket.BeginAccept(OnAcceptClient, null);
+            ListenSocket.Bind(new IPEndPoint(IPAddress.Loopback, 11771));
+            ListenSocket.Listen(10);
+            ListenSocket.BeginAccept(OnAcceptClient, null);
 
             Console.WriteLine("Server started");
 
-            Thread sendThread = new Thread(SendThreadJob);
-            sendThread.Start();
+            Thread broadcastThread = new Thread(BroadcastThreadJob);
+            broadcastThread.Start();
 
             Console.ReadKey();
 
-            sendThread.Abort();
+            broadcastThread.Abort();
         }
 
-        private static void SendThreadJob()
+        private static void BroadcastThreadJob()
         {
-            double pow2_15 = 1 << 15;
+            const double pow2_15 = 1 << 15;
             while (Thread.CurrentThread.ThreadState != ThreadState.AbortRequested)
             {
-                if (Clients.Count != 0)
+                if (Clients.Count == 0)
                 {
-                    byte[] buffer = new byte[SendingBufferSize];
-                    for (int s = 0; s < SendingBufferSize; s += 2)
-                    {
-                        // mix samples
-
-                        float[] samples = new float[Clients.Count];
-                        for (var i = 0; i < Clients.Count; i++)
-                        {
-                            while (Clients[i].ReceiveBuffer.Queue.Count > 4) // 5 пакетов - задержка серьёзная
-                            {
-                                Clients[i].ReceiveBuffer.Queue.Dequeue();
-                            }
-
-                            var b1 = Clients[i].ReceiveBuffer.GetByte();
-                            var b2 = Clients[i].ReceiveBuffer.GetByte();
-
-                            // unpack 16 bit sample
-                            short sample = (short) (b1 | (b2 << 8));
-                            samples[i] = (float) (sample / pow2_15);
-                        }
-
-                        // find average
-                        float avg_sample = samples.Average();
-
-                        // represent as short
-                        short avg_sample_short = (short) (avg_sample * pow2_15);
-
-                        // convert to bytes
-                        byte s_b1 = (byte) (avg_sample_short & 0xff);
-                        byte s_b2 = (byte) ((avg_sample_short >> 8) & 0xff);
-
-                        //write
-                        buffer[s] = s_b1;
-                        buffer[s + 1] = s_b2;
-                    }
-
-                    for (int i = 0; i < Clients.Count; i++)
-                    {
-                        try
-                        {
-                            Clients[i].Socket.Send(buffer);
-                        }
-                        catch (SocketException)
-                        {
-                            Console.WriteLine("Client lost");
-                            Clients[i].Socket.Close();
-                            Clients.RemoveAt(i);
-                            i--;
-                        }
-                    }
-
-                    Console.WriteLine($"Sent {buffer.Length}");
+                    Thread.Sleep(1);
+                    continue;
                 }
+
+                byte[] buffer = new byte[SendingBufferSize];
+                for (int s = 0; s < SendingBufferSize; s += 2)
+                {
+                    // mix samples
+
+                    float[] samples = new float[Clients.Count];
+                    for (var i = 0; i < Clients.Count; i++)
+                    {
+                        while (Clients[i].QueuedBuffer.Queue.Count > 4) // 5 пакетов - задержка серьёзная
+                        {
+                            Clients[i].QueuedBuffer.Queue.Dequeue();
+                        }
+
+                        var b1 = Clients[i].QueuedBuffer.GetByte();
+                        var b2 = Clients[i].QueuedBuffer.GetByte();
+
+                        // unpack 16 bit sample
+                        short sample = (short) (b1 | (b2 << 8));
+                        samples[i] = (float) (sample / pow2_15);
+                    }
+
+                    // find average
+                    float avg_sample = samples.Average();
+
+                    // represent as short
+                    short avg_sample_short = (short) (avg_sample * pow2_15);
+
+                    // convert to bytes
+                    byte s_b1 = (byte) (avg_sample_short & 0xff);
+                    byte s_b2 = (byte) ((avg_sample_short >> 8) & 0xff);
+
+                    //write
+                    buffer[s] = s_b1;
+                    buffer[s + 1] = s_b2;
+                }
+
+                for (int i = 0; i < Clients.Count; i++)
+                {
+                    try
+                    {
+                        Clients[i].Socket.Send(buffer);
+                    }
+                    catch (SocketException)
+                    {
+                        Console.WriteLine("Client lost");
+                        Clients[i].Socket.Close();
+                        Clients.RemoveAt(i);
+                        i--;
+                    }
+                }
+
+                Console.WriteLine($"Sent {buffer.Length}");
 
                 Thread.Sleep(1000 / SendingFrequency);
             }
@@ -109,17 +112,24 @@ namespace Host
 
         private static void OnAcceptClient(IAsyncResult ar)
         {
-            Socket client = MainSocket.EndAccept(ar);
-            Console.WriteLine("Client connected");
+            try
+            {
+                Socket clientSocket = ListenSocket.EndAccept(ar);
+                Console.WriteLine("Client connected");
 
-            ClientData clientData = new ClientData(client, SendingBufferSize);
+                ClientData clientData = new ClientData(clientSocket, SendingBufferSize);
 
-            Clients.Add(clientData);
-            client.BeginReceive(clientData.ReceiveSocketBuffer, 0, clientData.ReceiveSocketBuffer.Length,
-                SocketFlags.None,
-                OnReceiveFromClient, clientData);
+                Clients.Add(clientData);
+                clientSocket.BeginReceive(clientData.SocketReceiveBuffer, 0, clientData.SocketReceiveBuffer.Length,
+                    SocketFlags.None,
+                    OnReceiveFromClient, clientData);
+            }
+            catch (SocketException)
+            {
+                Console.WriteLine("Exception in Accept");
+            }
 
-            MainSocket.BeginAccept(OnAcceptClient, null);
+            ListenSocket.BeginAccept(OnAcceptClient, null);
         }
 
         private static void OnReceiveFromClient(IAsyncResult ar)
@@ -127,17 +137,17 @@ namespace Host
             var clientData = (ClientData) ar.AsyncState;
             try
             {
-                var received = clientData.Socket.EndReceive(ar);
+                var receivedFromClient = clientData.Socket.EndReceive(ar);
 
-                Console.WriteLine($"\tRecv {received}");
+                Console.WriteLine($"\tRecv {receivedFromClient}");
 
-                byte[] actualBytes = new byte[received];
-                Buffer.BlockCopy(clientData.ReceiveSocketBuffer, 0, actualBytes, 0, received);
+                byte[] bufferForUserData = new byte[receivedFromClient];
+                Buffer.BlockCopy(clientData.SocketReceiveBuffer, 0, bufferForUserData, 0, receivedFromClient);
 
-                clientData.ReceiveBuffer.Queue.Enqueue(actualBytes);
+                clientData.QueuedBuffer.Queue.Enqueue(bufferForUserData);
 
-                clientData.Socket.BeginReceive(clientData.ReceiveSocketBuffer, 0,
-                    clientData.ReceiveSocketBuffer.Length, SocketFlags.None, OnReceiveFromClient, clientData);
+                clientData.Socket.BeginReceive(clientData.SocketReceiveBuffer, 0,
+                    clientData.SocketReceiveBuffer.Length, SocketFlags.None, OnReceiveFromClient, clientData);
             }
             catch (SocketException)
             {
@@ -151,14 +161,14 @@ namespace Host
     public class ClientData
     {
         public Socket Socket { get; private set; }
-        public byte[] ReceiveSocketBuffer { get; private set; }
-        public ReceiveBuffer ReceiveBuffer { get; set; }
+        public byte[] SocketReceiveBuffer { get; private set; }
+        public ReceiveBuffer QueuedBuffer { get; set; }
 
         public ClientData(Socket socket, int size)
         {
             Socket = socket;
-            ReceiveSocketBuffer = new byte[size];
-            ReceiveBuffer = new ReceiveBuffer();
+            SocketReceiveBuffer = new byte[size];
+            QueuedBuffer = new ReceiveBuffer();
         }
     }
 
