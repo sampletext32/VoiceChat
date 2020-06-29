@@ -158,10 +158,12 @@ namespace Client
         {
             // ожидаем разрешения начала записи и начинаем
             RecordResetEvent.WaitOne();
+            Console.WriteLine("Rec start");
             WaveIn.StartRecording();
 
             // ждём пока необходимо остановить запись и останавливаем
             RecordResetEvent.WaitOne();
+            Console.WriteLine("Rec stop");
             WaveIn.StopRecording();
         }
 
@@ -206,6 +208,7 @@ namespace Client
                         Console.WriteLine("Aborting SendThread");
                         IsSocketConnected = false;
                         Thread.CurrentThread.Abort();
+                        RecordResetEvent.Set();
                     }
 
                     // Console.WriteLine("Sent");
@@ -293,6 +296,7 @@ namespace Client
                 Console.WriteLine("Host lost");
                 IsSocketConnected = false;
                 MainSocket.Close();
+                RecordResetEvent.Set();
             }
         }
 
