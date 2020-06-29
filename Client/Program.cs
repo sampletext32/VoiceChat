@@ -41,10 +41,10 @@ namespace Client
             new BufferedWaveProvider(RecordingFormat);
 
         // очередь пакетов на отправку
-        private static readonly Queue<byte[]> SendingQueue = new Queue<byte[]>();
+        private static readonly Queue<byte[]> SendQueue = new Queue<byte[]>();
 
         // очередь пакетов на воспроизведение
-        private static readonly Queue<byte[]> MainPlayQueue = new Queue<byte[]>();
+        private static readonly Queue<byte[]> PlayQueue = new Queue<byte[]>();
 
         // входной поток с микрофона
         private static readonly WaveInEvent WaveIn = new WaveInEvent();
@@ -174,21 +174,21 @@ namespace Client
             while (Thread.CurrentThread.ThreadState != ThreadState.AbortRequested)
             {
                 // если в отправке слишком много пакетов, удаляем самые старые, они уже не нужны
-                if (SendingQueue.Count >= MaxBufferedSendingPackets)
+                if (SendQueue.Count >= MaxBufferedSendingPackets)
                 {
                     Console.WriteLine(
-                        $"Sending queue is too large: {SendingQueue.Count}, trimming to {MaxBufferedSendingPackets} elems");
-                    while (SendingQueue.Count > MaxBufferedSendingPackets)
+                        $"Sending queue is too large: {SendQueue.Count}, trimming to {MaxBufferedSendingPackets} elems");
+                    while (SendQueue.Count > MaxBufferedSendingPackets)
                     {
-                        SendingQueue.Dequeue();
+                        SendQueue.Dequeue();
                     }
                 }
 
                 // пока есть данные к отправке и сокет подключен
-                while (SendingQueue.Count > 0 && IsSocketConnected)
+                while (SendQueue.Count > 0 && IsSocketConnected)
                 {
                     // получаем первый буфер
-                    var sendingBuffer = SendingQueue.Dequeue();
+                    var sendingBuffer = SendQueue.Dequeue();
                     try
                     {
                         if (IsSocketConnected)
@@ -226,13 +226,13 @@ namespace Client
             while (Thread.CurrentThread.ThreadState != ThreadState.AbortRequested)
             {
                 // если в воспроизведении слишком много пакетов, удаляем самые старые, они уже не нужны
-                if (MainPlayQueue.Count > MaxBufferedPlayingPackets)
+                if (PlayQueue.Count > MaxBufferedPlayingPackets)
                 {
                     Console.WriteLine(
-                        $"Playing Queue is too large: {MainPlayQueue.Count}, trimming to {MaxBufferedPlayingPackets} elems");
-                    while (MainPlayQueue.Count > MaxBufferedPlayingPackets)
+                        $"Playing Queue is too large: {PlayQueue.Count}, trimming to {MaxBufferedPlayingPackets} elems");
+                    while (PlayQueue.Count > MaxBufferedPlayingPackets)
                     {
-                        MainPlayQueue.Dequeue();
+                        PlayQueue.Dequeue();
                     }
                 }
 
@@ -240,10 +240,10 @@ namespace Client
                 PlayResetEvent.WaitOne();
 
                 // если в очереди что-то есть
-                while (MainPlayQueue.Count > 0)
+                while (PlayQueue.Count > 0)
                 {
                     // достаём один буфер
-                    var playingBuffer = MainPlayQueue.Dequeue();
+                    var playingBuffer = PlayQueue.Dequeue();
                     // дописываем сэмплы в конец
                     BufferedWaveProvider.AddSamples(playingBuffer, 0, playingBuffer.Length);
                     if (WaveOut.PlaybackState != PlaybackState.Playing)
@@ -276,7 +276,7 @@ namespace Client
                     Buffer.BlockCopy(MainSocketBuffer, 0, playBytes, 0, receivedBytesCount);
 
                     // добавляем буфер в очередь
-                    MainPlayQueue.Enqueue(playBytes);
+                    PlayQueue.Enqueue(playBytes);
 
                     // разрешаем воспроизведение
                     PlayResetEvent.Set();
@@ -310,7 +310,7 @@ namespace Client
             Buffer.BlockCopy(e.Buffer, 0, recordBytes, 0, e.BytesRecorded);
 
             // добавляем буфер в очередь отправки
-            SendingQueue.Enqueue(recordBytes);
+            SendQueue.Enqueue(recordBytes);
         }
     }
 }
