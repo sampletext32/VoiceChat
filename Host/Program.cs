@@ -99,7 +99,7 @@ namespace Host
                     {
                         maxSample = 1;
                     }
-                    else if (maxSample < 1)
+                    else if (maxSample < -1)
                     {
                         maxSample = -1;
                     }
