@@ -91,10 +91,20 @@ namespace Host
                         samplesFromClients[i] = (float) (sample / pow2_15);
                     }
 
-                    // ищем максимальное значение сэмпла
-                    float maxSample = samplesFromClients.Max();
+                    // ищем суммарное значение сэмпла
+                    float maxSample = samplesFromClients.Sum();
 
-                    // конвертируем в short 
+                    // устранение искажения звука из-за выхода за лимиты громкости
+                    if (maxSample > 1)
+                    {
+                        maxSample = 1;
+                    }
+                    else if (maxSample < 1)
+                    {
+                        maxSample = -1;
+                    }
+
+                    // конвертируем в short (2 байта (16 бит))
                     // PCM формат https://audiocoding.ru/articles/2008-05-22-wav-file-structure/wav_formats.txt
                     short maxSampleShort = (short) (maxSample * pow2_15);
 
