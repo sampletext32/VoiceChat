@@ -117,9 +117,6 @@ namespace Client
                 MainSocket.BeginReceive(MainSocketBuffer, 0, SendingBufferSize, SocketFlags.None,
                     OnSocketEndReceive,
                     null);
-
-                // запускаем воспроизведение
-                PlayResetEvent.Set();
             }
             else
             {
@@ -138,6 +135,9 @@ namespace Client
 
                 Thread playThread = new Thread(PlayThreadJob);
                 playThread.Start();
+
+                // запускаем воспроизведение
+                PlayResetEvent.Set();
 
                 Thread sendThread = new Thread(SendThreadJob);
                 sendThread.Start();
@@ -211,15 +211,8 @@ namespace Client
                     var sendingBuffer = SendQueue.Dequeue();
                     try
                     {
-                        if (IsSocketConnected)
-                        {
-                            // пытаемся отправить буфер
-                            MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Сокет уже отключен");
-                        }
+                        // пытаемся отправить буфер
+                        MainSocket.Send(sendingBuffer, 0, sendingBuffer.Length, SocketFlags.None);
                     }
                     catch (SocketException)
                     {
